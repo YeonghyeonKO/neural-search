@@ -7,20 +7,18 @@ package org.opensearch.neuralsearch.query;
 import static org.apache.lucene.search.DocIdSetIterator.NO_MORE_DOCS;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.opensearch.neuralsearch.util.TestUtils.DELTA_FOR_SCORE_ASSERTION;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.tuple.ImmutablePair;
 import org.apache.commons.lang3.tuple.Pair;
@@ -40,6 +38,8 @@ import lombok.SneakyThrows;
 import org.opensearch.neuralsearch.search.HybridDisiWrapper;
 
 public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
+    private static final int NUM_SUB_QUERIES = 2;
+    private static final int DOC_ID_1 = 1;
 
     @SneakyThrows
     public void testWithRandomDocuments_whenOneSubScorer_thenReturnSuccessfully() {
@@ -48,125 +48,11 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
         int[] docs = docsAndScores.getLeft();
         float[] scores = docsAndScores.getRight();
 
-        Weight weight = mock(Weight.class);
-
         HybridQueryScorer hybridQueryScorer = new HybridQueryScorer(
-            weight,
             Arrays.asList(scorer(docsAndScores.getLeft(), docsAndScores.getRight(), fakeWeight(new MatchAllDocsQuery())))
         );
 
         testWithQuery(docs, scores, hybridQueryScorer);
-    }
-
-    @SneakyThrows
-    public void testWithRandomDocumentsAndHybridScores_whenMultipleScorers_thenReturnSuccessfully() {
-        int maxDocId1 = TestUtil.nextInt(random(), 10, 10_000);
-        Pair<int[], float[]> docsAndScores1 = generateDocuments(maxDocId1);
-        int[] docs1 = docsAndScores1.getLeft();
-        float[] scores1 = docsAndScores1.getRight();
-        int maxDocId2 = TestUtil.nextInt(random(), 10, 10_000);
-        Pair<int[], float[]> docsAndScores2 = generateDocuments(maxDocId2);
-        int[] docs2 = docsAndScores2.getLeft();
-        float[] scores2 = docsAndScores2.getRight();
-
-        Weight weight = mock(Weight.class);
-
-        HybridQueryScorer hybridQueryScorer = new HybridQueryScorer(
-            weight,
-            Arrays.asList(
-                scorer(docs1, scores1, fakeWeight(new MatchAllDocsQuery())),
-                scorer(docs2, scores2, fakeWeight(new MatchNoDocsQuery()))
-            )
-        );
-        int doc = -1;
-        int numOfActualDocs = 0;
-        Set<Integer> uniqueDocs1 = Arrays.stream(docs1).boxed().collect(Collectors.toSet());
-        Set<Integer> uniqueDocs2 = Arrays.stream(docs2).boxed().collect(Collectors.toSet());
-        while (doc != NO_MORE_DOCS) {
-            doc = hybridQueryScorer.iterator().nextDoc();
-            if (doc == DocIdSetIterator.NO_MORE_DOCS) {
-                continue;
-            }
-            float[] actualTotalScores = hybridQueryScorer.hybridScores();
-            float actualTotalScore = 0.0f;
-            for (float score : actualTotalScores) {
-                actualTotalScore += score;
-            }
-            float expectedScore = 0.0f;
-            if (uniqueDocs1.contains(doc)) {
-                int idx = Arrays.binarySearch(docs1, doc);
-                expectedScore += scores1[idx];
-            }
-            if (uniqueDocs2.contains(doc)) {
-                int idx = Arrays.binarySearch(docs2, doc);
-                expectedScore += scores2[idx];
-            }
-            assertEquals(expectedScore, actualTotalScore, DELTA_FOR_SCORE_ASSERTION);
-            numOfActualDocs++;
-        }
-
-        int totalUniqueCount = uniqueDocs1.size();
-        for (int n : uniqueDocs2) {
-            if (!uniqueDocs1.contains(n)) {
-                totalUniqueCount++;
-            }
-        }
-        assertEquals(totalUniqueCount, numOfActualDocs);
-    }
-
-    @SneakyThrows
-    public void testWithRandomDocumentsAndCombinedScore_whenMultipleScorers_thenReturnSuccessfully() {
-        int maxDocId1 = TestUtil.nextInt(random(), 10, 10_000);
-        Pair<int[], float[]> docsAndScores1 = generateDocuments(maxDocId1);
-        int[] docs1 = docsAndScores1.getLeft();
-        float[] scores1 = docsAndScores1.getRight();
-        int maxDocId2 = TestUtil.nextInt(random(), 10, 10_000);
-        Pair<int[], float[]> docsAndScores2 = generateDocuments(maxDocId2);
-        int[] docs2 = docsAndScores2.getLeft();
-        float[] scores2 = docsAndScores2.getRight();
-
-        Weight weight = mock(Weight.class);
-
-        HybridQueryScorer hybridQueryScorer = new HybridQueryScorer(
-            weight,
-            Arrays.asList(
-                scorer(docs1, scores1, fakeWeight(new MatchAllDocsQuery())),
-                scorer(docs2, scores2, fakeWeight(new MatchNoDocsQuery()))
-            )
-        );
-        int doc = -1;
-        int numOfActualDocs = 0;
-        Set<Integer> uniqueDocs1 = Arrays.stream(docs1).boxed().collect(Collectors.toSet());
-        Set<Integer> uniqueDocs2 = Arrays.stream(docs2).boxed().collect(Collectors.toSet());
-        while (doc != NO_MORE_DOCS) {
-            doc = hybridQueryScorer.iterator().nextDoc();
-            if (doc == DocIdSetIterator.NO_MORE_DOCS) {
-                continue;
-            }
-            float expectedScore = 0.0f;
-            if (uniqueDocs1.contains(doc)) {
-                int idx = Arrays.binarySearch(docs1, doc);
-                expectedScore += scores1[idx];
-            }
-            if (uniqueDocs2.contains(doc)) {
-                int idx = Arrays.binarySearch(docs2, doc);
-                expectedScore += scores2[idx];
-            }
-            float hybridScore = 0.0f;
-            for (float score : hybridQueryScorer.hybridScores()) {
-                hybridScore += score;
-            }
-            assertEquals(expectedScore, hybridScore, DELTA_FOR_SCORE_ASSERTION);
-            numOfActualDocs++;
-        }
-
-        int totalUniqueCount = uniqueDocs1.size();
-        for (int n : uniqueDocs2) {
-            if (!uniqueDocs1.contains(n)) {
-                totalUniqueCount++;
-            }
-        }
-        assertEquals(totalUniqueCount, numOfActualDocs);
     }
 
     @SneakyThrows
@@ -176,10 +62,7 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
         int[] docs = docsAndScores.getLeft();
         float[] scores = docsAndScores.getRight();
 
-        Weight weight = mock(Weight.class);
-
         HybridQueryScorer hybridQueryScorer = new HybridQueryScorer(
-            weight,
             Arrays.asList(null, scorer(docs, scores, fakeWeight(new MatchAllDocsQuery())), null)
         );
 
@@ -193,10 +76,7 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
         int[] docs = docsAndScores.getLeft();
         float[] scores = docsAndScores.getRight();
 
-        Weight weight = mock(Weight.class);
-
         HybridQueryScorer hybridQueryScorerWithAllNonNullSubScorers = new HybridQueryScorer(
-            weight,
             Arrays.asList(
                 scorer(docs, scores, fakeWeight(new MatchAllDocsQuery())),
                 scorer(docs, scores, fakeWeight(new MatchNoDocsQuery()))
@@ -207,17 +87,11 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
         assertTrue(maxScore > 0.0f);
 
         HybridQueryScorer hybridQueryScorerWithSomeNullSubScorers = new HybridQueryScorer(
-            weight,
             Arrays.asList(null, scorer(docs, scores, fakeWeight(new MatchAllDocsQuery())), null)
         );
 
         maxScore = hybridQueryScorerWithSomeNullSubScorers.getMaxScore(Integer.MAX_VALUE);
         assertTrue(maxScore > 0.0f);
-
-        HybridQueryScorer hybridQueryScorerWithAllNullSubScorers = new HybridQueryScorer(weight, Arrays.asList(null, null));
-
-        maxScore = hybridQueryScorerWithAllNullSubScorers.getMaxScore(Integer.MAX_VALUE);
-        assertEquals(0.0f, maxScore, 0.0f);
     }
 
     @SneakyThrows
@@ -225,16 +99,12 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
         int maxDocId = TestUtil.nextInt(random(), 10, 10_000);
         Pair<int[], float[]> docsAndScores = generateDocuments(maxDocId);
         int[] docs = docsAndScores.getLeft();
-        float[] scores = docsAndScores.getRight();
-
-        Weight weight = mock(Weight.class);
 
         Scorer scorer = mock(Scorer.class);
-        // when(scorer.getWeight()).thenReturn(fakeWeight(new MatchAllDocsQuery()));
         when(scorer.iterator()).thenReturn(iterator(docs));
         when(scorer.getMaxScore(anyInt())).thenThrow(new IOException("Test exception"));
 
-        IOException runtimeException = expectThrows(IOException.class, () -> new HybridQueryScorer(weight, Arrays.asList(scorer)));
+        IOException runtimeException = expectThrows(IOException.class, () -> new HybridQueryScorer(Arrays.asList(scorer)));
         assertTrue(runtimeException.getMessage().contains("Test exception"));
     }
 
@@ -261,10 +131,7 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
             scores2[i] = random().nextFloat();
         }
 
-        Weight weight = mock(Weight.class);
-
         HybridQueryScorer queryScorer = new HybridQueryScorer(
-            weight,
             Arrays.asList(
                 scorerWithTwoPhaseIterator(docs, scores1, fakeWeight(new MatchAllDocsQuery()), maxDoc),
                 scorerWithTwoPhaseIterator(docs, scores2, fakeWeight(new MatchNoDocsQuery()), maxDoc)
@@ -304,8 +171,7 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
         DisiWrapper wrapper1 = new DisiWrapper(scorer1, false);
         wrapper1.next = new DisiWrapper(scorer2, false);
 
-        Weight weight = mock(Weight.class);
-        HybridQueryScorer hybridScorer = new HybridQueryScorer(weight, Arrays.asList(scorer1, scorer2));
+        HybridQueryScorer hybridScorer = new HybridQueryScorer(Arrays.asList(scorer1, scorer2));
         float score = hybridScorer.score(wrapper1);
 
         assertEquals("Combined score should be sum of individual scores", 0.8f, score, DELTA_FOR_SCORE_ASSERTION);
@@ -333,11 +199,8 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
         // Create wrapper
         DisiWrapper wrapper = new DisiWrapper(scorer, false);
 
-        // Create weight mock
-        Weight weight = mock(Weight.class);
-
         // Create HybridQueryScorer
-        HybridQueryScorer hybridScorer = new HybridQueryScorer(weight, Collections.singletonList(scorer));
+        HybridQueryScorer hybridScorer = new HybridQueryScorer(Collections.singletonList(scorer));
 
         // Test score method
         float score = hybridScorer.score(wrapper);
@@ -348,8 +211,6 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
 
     @SneakyThrows
     public void testGetSubMatches_whenNoScorers_thenReturnNull() {
-        Weight weight = mock(Weight.class);
-
         // Create a scorer with a two-phase iterator that doesn't match
         Scorer scorer = mock(Scorer.class);
         DocIdSetIterator iterator = mock(DocIdSetIterator.class);
@@ -359,7 +220,7 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
         when(scorer.iterator()).thenReturn(iterator);
         when(scorer.docID()).thenReturn(0);  // Set a valid docID
 
-        HybridQueryScorer hybridScorer = new HybridQueryScorer(weight, Collections.singletonList(scorer), ScoreMode.TOP_SCORES);
+        HybridQueryScorer hybridScorer = new HybridQueryScorer(Collections.singletonList(scorer), ScoreMode.TOP_SCORES);
 
         DisiWrapper result = hybridScorer.getSubMatches();
         assertNull("Should return null when no matches are available", result);
@@ -367,9 +228,6 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
 
     @SneakyThrows
     public void testGetSubMatches_whenTwoPhaseIteratorPresent_thenReturnWrapper() {
-        // Create weight mock
-        Weight weight = mock(Weight.class);
-
         // Create scorer with iterator
         Scorer scorer = mock(Scorer.class);
         DocIdSetIterator iterator = mock(DocIdSetIterator.class);
@@ -410,7 +268,7 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
         when(twoPhase.matches()).thenReturn(true);
 
         // Create HybridQueryScorer
-        HybridQueryScorer hybridScorer = new HybridQueryScorer(weight, Collections.singletonList(scorer), ScoreMode.TOP_SCORES);
+        HybridQueryScorer hybridScorer = new HybridQueryScorer(Collections.singletonList(scorer), ScoreMode.TOP_SCORES);
 
         // Initialize the scorer by moving to first doc
         DocIdSetIterator scorerIterator = hybridScorer.iterator();
@@ -437,8 +295,6 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
 
     @SneakyThrows
     public void testAdvanceShallow_whenTargetProvided_thenReturnTarget() {
-        Weight weight = mock(Weight.class);
-
         // Create scorer
         Scorer scorer = mock(Scorer.class);
         DocIdSetIterator iterator = mock(DocIdSetIterator.class);
@@ -486,7 +342,7 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
         when(approximation.cost()).thenReturn(1L);
 
         // Create hybrid scorer with custom advanceShallow implementation
-        HybridQueryScorer hybridScorer = new HybridQueryScorer(weight, Collections.singletonList(scorer), ScoreMode.TOP_SCORES) {
+        HybridQueryScorer hybridScorer = new HybridQueryScorer(Collections.singletonList(scorer), ScoreMode.TOP_SCORES) {
             @Override
             public float score() throws IOException {
                 return 1.0f;
@@ -540,20 +396,10 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
         DisiWrapper neuralWrapper = new DisiWrapper(neuralScorer, false);
         boolWrapper.next = neuralWrapper;
 
-        Weight weight = mock(Weight.class);
-        HybridQueryScorer hybridScorer = new HybridQueryScorer(weight, Arrays.asList(boolScorer, neuralScorer), ScoreMode.COMPLETE);
+        HybridQueryScorer hybridScorer = new HybridQueryScorer(Arrays.asList(boolScorer, neuralScorer), ScoreMode.COMPLETE);
         float combinedScore = hybridScorer.score(boolWrapper);
 
         assertEquals("Combined score should be sum of bool and neural scores", 1.6f, combinedScore, DELTA_FOR_SCORE_ASSERTION);
-    }
-
-    @SneakyThrows
-    public void testScore_whenEmptySubScorers_thenReturnZero() {
-        Weight weight = mock(Weight.class);
-        HybridQueryScorer hybridScorer = new HybridQueryScorer(weight, Collections.emptyList());
-        float score = hybridScorer.score(null);
-
-        assertEquals("Score should be 0.0 for null wrapper", 0.0f, score, DELTA_FOR_SCORE_ASSERTION);
     }
 
     @SneakyThrows
@@ -590,47 +436,6 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
     }
 
     @SneakyThrows
-    public void testHybridScores_withTwoPhaseIterator() throws IOException {
-        // Create weight and scorers
-        Weight weight = mock(Weight.class);
-        Scorer scorer1 = mock(Scorer.class);
-        TwoPhaseIterator twoPhaseIterator = mock(TwoPhaseIterator.class);
-        DocIdSetIterator approximation = mock(DocIdSetIterator.class);
-
-        // Setup two-phase behavior
-        when(scorer1.twoPhaseIterator()).thenReturn(twoPhaseIterator);
-        when(twoPhaseIterator.approximation()).thenReturn(approximation);
-        when(scorer1.iterator()).thenReturn(approximation);
-        when(approximation.cost()).thenReturn(1L);
-
-        // Setup DocIdSetIterator behavior - use different docIDs
-        when(approximation.docID()).thenReturn(5);  // approximation at doc 5
-        when(scorer1.docID()).thenReturn(5);        // scorer at same doc
-        when(scorer1.score()).thenReturn(2.0f);
-
-        // matches() always returns false - document should never match
-        when(twoPhaseIterator.matches()).thenReturn(false);
-
-        // Create HybridQueryScorer with two-phase iterator
-        List<Scorer> subScorers = Collections.singletonList(scorer1);
-        HybridQueryScorer hybridScorer = new HybridQueryScorer(weight, subScorers);
-
-        // Call matches() first to establish non-matching state
-        TwoPhaseIterator hybridTwoPhase = hybridScorer.twoPhaseIterator();
-        assertNotNull("Should have two phase iterator", hybridTwoPhase);
-        assertFalse("Document should not match", hybridTwoPhase.matches());
-
-        // Get scores - should be zero since document doesn't match
-        float[] scores = hybridScorer.hybridScores();
-        assertEquals("Should have one score entry", 1, scores.length);
-        assertEquals("Score should be 0 for non-matching document", 0.0f, scores[0], DELTA_FOR_SCORE_ASSERTION);
-
-        // Verify score() was never called since document didn't match
-        verify(scorer1, never()).score();
-        verify(twoPhaseIterator, times(1)).matches();
-    }
-
-    @SneakyThrows
     public void testTwoPhaseIterator_withNestedTwoPhaseQuery() {
         // Create a scorer that uses two-phase iteration
         Scorer scorer = mock(Scorer.class);
@@ -657,6 +462,23 @@ public class HybridQueryScorerTests extends OpenSearchQueryTestCase {
         // Verify that the two-phase behavior is preserved
         assertTrue("Should match", wrapperTwoPhase.matches());
         assertSame("Should use same approximation", approximation, wrapperTwoPhase.approximation());
+    }
+
+    @SneakyThrows
+    public void testScore_whenNeedScoresIsFalse_thenReturnsZero() {
+        List<Scorer> scorers = new ArrayList<>();
+        Scorer mockScorer = mock(Scorer.class);
+        DocIdSetIterator mockIterator = mock(DocIdSetIterator.class);
+
+        when(mockScorer.iterator()).thenReturn(mockIterator);
+        when(mockIterator.cost()).thenReturn(1L);
+        scorers.add(mockScorer);
+
+        HybridQueryScorer scorer = new HybridQueryScorer(scorers, ScoreMode.COMPLETE_NO_SCORES);
+
+        float score = scorer.score();
+
+        assertEquals(0.0f, score, 0.0f);
     }
 
     protected static Scorer scorerWithTwoPhaseIterator(final int[] docs, final float[] scores, Weight weight, int maxDoc) {

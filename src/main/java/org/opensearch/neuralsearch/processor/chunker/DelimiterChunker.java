@@ -14,7 +14,7 @@ import static org.opensearch.neuralsearch.processor.chunker.ChunkerParameterPars
 /**
  * The implementation {@link Chunker} for delimiter algorithm
  */
-public final class DelimiterChunker implements Chunker {
+public final class DelimiterChunker extends Chunker {
 
     /** The identifier for the delimiter chunking algorithm. */
     public static final String ALGORITHM_NAME = "delimiter";
@@ -82,5 +82,10 @@ public final class DelimiterChunker implements Chunker {
         }
 
         return chunkResult;
+    }
+
+    @Override
+    public String getAlgorithmName() {
+        return ALGORITHM_NAME;
     }
 }

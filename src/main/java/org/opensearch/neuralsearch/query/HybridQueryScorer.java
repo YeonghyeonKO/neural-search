@@ -14,7 +14,6 @@ import org.apache.lucene.search.DocIdSetIterator;
 import org.apache.lucene.search.ScoreMode;
 import org.apache.lucene.search.Scorer;
 import org.apache.lucene.search.TwoPhaseIterator;
-import org.apache.lucene.search.Weight;
 import org.apache.lucene.util.PriorityQueue;
 import org.opensearch.neuralsearch.search.HybridDisiWrapper;
 
@@ -44,18 +43,24 @@ public class HybridQueryScorer extends Scorer {
     private final TwoPhase twoPhase;
     private final int numSubqueries;
 
-    public HybridQueryScorer(final Weight weight, final List<Scorer> subScorers) throws IOException {
-        this(weight, subScorers, ScoreMode.TOP_SCORES);
+    public HybridQueryScorer(final List<Scorer> subScorers) throws IOException {
+        this(subScorers, ScoreMode.TOP_SCORES);
     }
 
-    HybridQueryScorer(final Weight weight, final List<Scorer> subScorers, final ScoreMode scoreMode) throws IOException {
+    HybridQueryScorer(final List<Scorer> subScorers, final ScoreMode scoreMode) throws IOException {
         super();
         this.subScorers = Collections.unmodifiableList(subScorers);
         this.numSubqueries = subScorers.size();
-        this.subScorersPQ = initializeSubScorersPQ();
+        List<HybridDisiWrapper> hybridDisiWrappers = initializeSubScorersList();
+        if (hybridDisiWrappers.isEmpty()) {
+            throw new IllegalArgumentException("There must be at least 1 subScorers");
+        }
+        this.subScorersPQ = DisiPriorityQueue.ofMaxSize(numSubqueries);
+        this.subScorersPQ.addAll(hybridDisiWrappers.toArray(new DisiWrapper[0]), 0, hybridDisiWrappers.size());
         boolean needsScores = scoreMode != ScoreMode.COMPLETE_NO_SCORES;
 
-        this.approximation = new HybridSubqueriesDISIApproximation(this.subScorersPQ);
+        this.approximation = new HybridSubqueriesDISIApproximation(hybridDisiWrappers, subScorersPQ);
+
         if (scoreMode == ScoreMode.TOP_SCORES) {
             this.disjunctionBlockPropagator = new HybridScoreBlockBoundaryPropagator(subScorers);
         } else {
@@ -75,7 +80,7 @@ public class HybridQueryScorer extends Scorer {
                 sumMatchCost += w.matchCost * costWeight;
             }
         }
-        if (!hasApproximation) { // no sub scorer supports approximations
+        if (hasApproximation == false) { // no sub scorer supports approximations
             twoPhase = null;
         } else {
             final float matchCost = sumMatchCost / sumApproxCost;
@@ -182,44 +187,20 @@ public class HybridQueryScorer extends Scorer {
         return subScorersPQ.top().doc;
     }
 
-    /**
-     * Return array of scores per sub-query for doc id that is defined by current iterator position
-     * @return
-     * @throws IOException
-     */
-    public float[] hybridScores() throws IOException {
-        float[] scores = new float[numSubqueries];
-        // retrieves sub-matches using DisjunctionDisiScorer's two-phase iteration process.
-        // while the two-phase iterator can efficiently skip blocks of document IDs during matching,
-        // the DisiWrapper (obtained from subScorersPQ.topList()) ensures sequential document ID iteration.
-        // this is necessary for maintaining correct scoring order.
-        DisiWrapper topList = getSubMatches();
-
-        for (HybridDisiWrapper disiWrapper = (HybridDisiWrapper) topList; disiWrapper != null; disiWrapper =
-            (HybridDisiWrapper) disiWrapper.next) {
-            // check if this doc has match in the subQuery. If not, add score as 0.0 and continue
-            Scorer scorer = disiWrapper.scorer;
-            if (scorer.docID() == DocIdSetIterator.NO_MORE_DOCS) {
-                continue;
-            }
-            scores[disiWrapper.getSubQueryIndex()] = scorer.score();
-        }
-        return scores;
-    }
-
-    private DisiPriorityQueue initializeSubScorersPQ() {
+    private List<HybridDisiWrapper> initializeSubScorersList() {
         Objects.requireNonNull(subScorers, "should not be null");
         // we need to count this way in order to include all identical sub-queries
-        DisiPriorityQueue subScorersPQ = new DisiPriorityQueue(numSubqueries);
+        List<HybridDisiWrapper> hybridDisiWrappers = new ArrayList<>();
         for (int idx = 0; idx < numSubqueries; idx++) {
             Scorer scorer = subScorers.get(idx);
             if (scorer == null) {
                 continue;
             }
             final HybridDisiWrapper disiWrapper = new HybridDisiWrapper(scorer, idx);
-            subScorersPQ.add(disiWrapper);
+            hybridDisiWrappers.add(disiWrapper);
+
         }
-        return subScorersPQ;
+        return hybridDisiWrappers;
     }
 
     @Override
@@ -284,7 +265,7 @@ public class HybridQueryScorer extends Scorer {
                     wrapper.next = verifiedMatches;
                     verifiedMatches = wrapper;
 
-                    if (!needsScores) {
+                    if (needsScores == false) {
                         // we can stop here
                         return true;
                     }
@@ -325,9 +306,12 @@ public class HybridQueryScorer extends Scorer {
         final DocIdSetIterator docIdSetIterator;
         final DisiPriorityQueue subIterators;
 
-        public HybridSubqueriesDISIApproximation(final DisiPriorityQueue subIterators) {
-            docIdSetIterator = new DisjunctionDISIApproximation(subIterators);
-            this.subIterators = subIterators;
+        public HybridSubqueriesDISIApproximation(
+            final Collection<? extends DisiWrapper> subIterators,
+            final DisiPriorityQueue subIteratorsPQ
+        ) {
+            docIdSetIterator = new DisjunctionDISIApproximation(subIterators, 0);
+            this.subIterators = subIteratorsPQ;
         }
 
         @Override

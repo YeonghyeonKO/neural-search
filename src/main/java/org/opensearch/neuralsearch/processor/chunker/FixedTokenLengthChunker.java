@@ -22,7 +22,7 @@ import static org.opensearch.neuralsearch.processor.chunker.ChunkerParameterPars
 /**
  * The implementation {@link Chunker} for fixed token length algorithm.
  */
-public final class FixedTokenLengthChunker implements Chunker {
+public final class FixedTokenLengthChunker extends Chunker {
 
     /** The identifier for the fixed token length chunking algorithm. */
     public static final String ALGORITHM_NAME = "fixed_token_length";
@@ -179,5 +179,10 @@ public final class FixedTokenLengthChunker implements Chunker {
         } catch (Exception e) {
             throw new IllegalStateException(String.format(Locale.ROOT, "analyzer %s throws exception: %s", tokenizer, e.getMessage()), e);
         }
+    }
+
+    @Override
+    public String getAlgorithmName() {
+        return ALGORITHM_NAME;
     }
 }
